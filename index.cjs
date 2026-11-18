@@ -8,11 +8,12 @@ const id = 'signalk-grib-processor'
 const version = require('./package.json').version
 const registryKey = Symbol.for('macjl.forecast-datasets.processors.v1')
 const worker = path.join(__dirname, 'worker.py')
-const aromeFields = new Map([
-  ['eastward_wind', '10u'],
-  ['northward_wind', '10v'],
-  ['air_pressure_at_mean_sea_level', 'prmsl']
-])
+const windLevel = { type: 'heightAboveGround', value: 10, unit: 'm' }
+const aromeFields = [
+  { parameter: 'eastward_wind', level: windLevel, shortName: '10u' },
+  { parameter: 'northward_wind', level: windLevel, shortName: '10v' },
+  { parameter: 'air_pressure_at_mean_sea_level', shortName: 'prmsl' }
+]
 const isArome = record =>
   record.metadata?.model === 'AROME' &&
   record.assets.every(asset => asset.id.startsWith('arome-0025__'))
@@ -55,21 +56,34 @@ module.exports = app => {
             return [{
               operation: 'export',
               output: { format: 'grib2', layout: 'single-file' },
-              selectors: isArome(record) ? ['bbox', 'fields', 'from', 'to'] : []
+              ...(isArome(record) ? {
+                selectors: ['bbox', 'fields', 'from', 'to'],
+                fields: aromeFields.map(({ shortName, ...field }) => field),
+                forecastInterval: { stepSeconds: 3600, maxHours: 51 }
+              } : { selectors: [] })
             }]
           },
           async run({ selection, paths, output, maxBytes, signal }) {
             const args = [worker, '--output', output, '--max-bytes', String(maxBytes)]
-            if (selection.bbox) args.push('--bbox', ...selection.bbox.map(String))
-            for (const field of selection.fields ?? []) args.push('--field', aromeFields.get(field.parameter))
+            if (selection.bbox) args.push('--bbox', ...selection.bbox.map(value => value.toFixed(12)))
+            for (const field of selection.fields ?? []) {
+              const supported = aromeFields.find(available => available.parameter === field.parameter)
+              if (!supported) throw new Error('Unsupported field')
+              args.push('--field', supported.shortName)
+            }
             if (selection.from) args.push('--from', selection.from, '--to', selection.to)
-            const { stdout } = await exec(python, [...args, '--', ...paths], {
+            const run = exec(python, [...args, '--', ...paths], {
               signal: AbortSignal.any([signal, controller.signal]),
               timeout: 120000,
               killSignal: 'SIGKILL',
               maxBuffer: 256 * 1024
             })
-            return JSON.parse(stdout)
+            const closed = new Promise(resolve => run.child.once('close', resolve))
+            try {
+              return JSON.parse((await run).stdout)
+            } finally {
+              await closed
+            }
           }
         }
         registry.set(scope, registered)

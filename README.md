@@ -8,7 +8,7 @@ grid. It runs ecCodes in a bounded Python subprocess on the catalogue server.
 ## Local installation
 
 Use Signal K 2.35.1 with Node 22+ and Forecast Dataset Provider
-0.3.0-alpha.1. Install the packed plugin through Signal K, then create a
+0.3.0-alpha.3. Install the packed plugin through Signal K, then create a
 Python 3.11+ virtual environment in the processor's plugin data directory.
 
 ```sh
@@ -24,17 +24,16 @@ ecCodes and NumPy wheels available for the target architecture.
 
 ## Use the API
 
-A Signal K client with write access submits an export to
-`POST /plugins/signalk-forecast-dataset-provider/datasets/{id}/versions/{version}/requests`.
-Send `{"operation":"export","output":{"format":"grib2","layout":"single-file"}}`
-to assemble an existing dataset. Follow the job link, then download
-`result.href` once the job completes. The result is temporary and its link
-expires after 20 minutes.
+Find the export operation in a dataset's `capabilities.operations`. POST
+to its `href` with a Signal K write identity. An empty request assembles all
+assets into one GRIB2. If the job is running, poll its `href` using the indicated
+delay. A completed job returns a catalogue dataset. Download it through
+`result.assets[0].href`.
 
-To store a result in a catalogue, explicitly create a staged publication,
-upload the returned GRIB2, and commit the publication. See the
-`docs/grib-export-alpha.md` in Forecast Dataset Provider
-for crop selectors and job details.
+The provider publishes the result automatically. It expires 20 minutes after
+commit by default. Send `"expiresInSeconds": null` to keep it without expiry,
+or send a positive duration for a custom lifetime. See `docs/grib-export-alpha.md`
+in Forecast Dataset Provider for selectors and job details.
 
-This alpha runs one export at a time, holds up to four results or failed jobs
-and limits sources and individual output to 1 GiB.
+This alpha runs one export at a time. Its source limit is 1 GiB, and the
+output limit advertised on each operation also respects the provider settings.

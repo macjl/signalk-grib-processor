@@ -1,6 +1,6 @@
 {
   "name": "signalk-grib-processor",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "On-demand GRIB2 export and spatial subset processing for Signal K",
   "main": "index.cjs",
   "files": ["index.cjs", "worker.py", "LICENSE", "README.md"],

@@ -80,6 +80,7 @@ def crop(handle, bbox):
 def process(args, output):
     count = 0
     actual_bounds = None
+    selecting = args.field or args.bbox or args.start or args.end
     observed = {}
     run = None
     found = set()
@@ -94,10 +95,14 @@ def process(args, output):
                     ):
                         raise ValueError(f'Expected contiguous GRIB2 messages in {source.name}')
                     end += grib.codes_get_message_size(handle)
+                    if not selecting:
+                        grib.codes_write(handle, output)
+                        count += 1
+                        continue
                     cycle = tuple(grib.codes_get(handle, key) for key in ('dataDate', 'dataTime'))
                     if run is None:
                         run = cycle
-                    if cycle != run and (args.field or args.bbox or args.start or args.end):
+                    if cycle != run:
                         raise ValueError('All inputs must come from the same model run')
                     field = grib.codes_get(handle, 'shortName')
                     if args.field and field not in args.field:
