@@ -1,0 +1,17 @@
+{
+  "name": "signalk-grib-processor",
+  "version": "0.1.0-alpha.1",
+  "description": "On-demand GRIB2 export and spatial subset processing for Signal K",
+  "main": "index.cjs",
+  "files": ["index.cjs", "worker.py", "public", "LICENSE", "README.md"],
+  "scripts": {
+    "test": "node --test test/*.test.cjs"
+  },
+  "keywords": ["signalk-node-server-plugin", "signalk-webapp", "signalk-category-weather", "grib"],
+  "engines": { "node": ">=22" },
+  "license": "Apache-2.0",
+  "signalk": {
+    "displayName": "GRIB Processor",
+    "requires": ["signalk-forecast-dataset-provider"]
+  }
+}
