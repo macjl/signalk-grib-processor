@@ -20,16 +20,21 @@ python3 -m venv "$processor_dir/venv"
 
 Enable GRIB Processor in Plugin Config. The optional **Python executable**
 setting points to an alternative environment. This alpha runs on Linux with
-ecCodes and NumPy wheels available for the target architecture. Refresh the
-Signal K webapps list and open **GRIB Processor**. Sign in with a write access
-role to start an export.
+ecCodes and NumPy wheels available for the target architecture.
 
-Select an AROME dataset, enter west, south, east and north and choose a period
-within the dataset. The preset requests the first 12 hours of the selected run.
-For an unfiltered GRIB2 export select **Assemble into one GRIB2**. Download the
-result once ready. Result links are authenticated and valid for 20 minutes.
+## Use the API
 
-Clients can use the provider's `/datasets/{id}/versions/{version}/requests`
-and the returned job/result links. The provider owns result delivery and
-expiry. This alpha runs one export at a time, holds up to four results or
-failed jobs and limits sources and individual output to 1 GiB.
+A Signal K client with write access submits an export to
+`POST /plugins/signalk-forecast-dataset-provider/datasets/{id}/versions/{version}/requests`.
+Send `{"operation":"export","output":{"format":"grib2","layout":"single-file"}}`
+to assemble an existing dataset. Follow the job link, then download
+`result.href` once the job completes. The result is temporary and its link
+expires after 20 minutes.
+
+To store a result in a catalogue, explicitly create a staged publication,
+upload the returned GRIB2, and commit the publication. See the
+`docs/grib-export-alpha.md` in Forecast Dataset Provider
+for crop selectors and job details.
+
+This alpha runs one export at a time, holds up to four results or failed jobs
+and limits sources and individual output to 1 GiB.
