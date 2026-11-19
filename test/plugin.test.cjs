@@ -6,30 +6,41 @@ const os = require('node:os')
 const create = require('../index.cjs')
 const { createEncoder } = require('../eccodes.cjs')
 
-test('the bundled WASM worker advertises and performs AROME crops', async t => {
+test('the WASM worker advertises model-independent area, time and field selections', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'signalk-grib-worker-'))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   const errors = []
+  const statuses = []
   const plugin = create({
     getDataDirPath: () => path.join(directory, 'processor'),
-    setPluginStatus() {},
+    setPluginStatus: status => statuses.push(status),
     setPluginError: error => errors.push(error)
   })
   t.after(() => plugin.stop())
   const registry = globalThis[Symbol.for('macjl.forecast-datasets.processors.v1')]
   await plugin.start()
   assert.deepEqual(errors, [])
+  assert.deepEqual(statuses, ['Ready for GRIB2 processing'])
   assert.deepEqual(plugin.schema.properties, {})
   const processor = registry.get(directory)
-  const capabilities = processor.capabilities({
-    format: 'grib2', metadata: { model: 'AROME' }, assets: [{ id: 'arome-0025__asset' }],
+  const compatibleProvider = { timeRanges: true, unlistedFields: true }
+  const record = { format: 'grib2', metadata: { model: 'Arbitrary model' }, assets: [{ id: 'import' }] }
+  assert.deepEqual(processor.capabilities(record)[0].selectors, ['bbox'])
+  assert.deepEqual(processor.capabilities({
+    format: 'grib2',
+    metadata: { model: 'arbitrary', grid: { gridType: 'reduced_gg' }, fields: [{ parameter: 't' }] },
+    assets: []
+  }, compatibleProvider)[0].selectors, ['fields', 'from', 'to'])
+  assert.deepEqual(processor.capabilities(record, compatibleProvider)[0], {
+    operation: 'export',
+    output: { format: 'grib2', layout: 'single-file' },
+    selectors: ['bbox', 'fields', 'from', 'to'],
   })
-  assert.deepEqual(capabilities[0].selectors, ['bbox', 'fields', 'from', 'to'])
   const output = path.join(directory, 'selection.grib2')
   const result = await processor.run({
     selection: {
       bbox: [-5.975, 45.025, -5.925, 45.075],
-      fields: [{ parameter: 'eastward_wind' }],
+      fields: [{ parameter: 'eastward_wind', level: { type: 'heightAboveGround', value: 10, unit: 'm' } }],
       from: '2026-11-18T15:00:00Z', to: '2026-11-18T15:00:00Z',
     },
     paths: [path.join(__dirname, 'fixtures', 'arome-grid.grib2')],
