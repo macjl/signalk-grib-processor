@@ -11,3 +11,4 @@ jobs:
     uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@master
     with:
       enable-signalk-integration: true
+      node-versions: '["24", "26"]'

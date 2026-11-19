@@ -7,7 +7,7 @@ const exec = promisify(execFile)
 const id = 'signalk-grib-processor'
 const version = require('./package.json').version
 const registryKey = Symbol.for('macjl.forecast-datasets.processors.v1')
-const worker = path.join(__dirname, 'worker.py')
+const worker = path.join(__dirname, 'worker.cjs')
 const windLevel = { type: 'heightAboveGround', value: 10, unit: 'm' }
 const aromeFields = [
   { parameter: 'eastward_wind', level: windLevel, shortName: '10u' },
@@ -28,22 +28,12 @@ module.exports = app => {
     id,
     name: 'GRIB Processor',
     description: 'Export GRIB2 files and crop AROME on the catalogue server',
-    schema: {
-      type: 'object',
-      properties: {
-        python: {
-          type: 'string',
-          title: 'Python executable with ecCodes and NumPy',
-          default: ''
-        }
-      }
-    },
-    start(options = {}) {
+    schema: { type: 'object', properties: {} },
+    start() {
       const dataDir = app.getDataDirPath()
       scope = path.dirname(dataDir)
-      const python = options.python || path.join(dataDir, 'venv', 'bin', 'python')
       const controller = lifetime = new AbortController()
-      starting = exec(python, ['-c', 'import eccodes, numpy'], {
+      starting = exec(process.execPath, [worker, '--check'], {
         signal: controller.signal,
         timeout: 15000
       }).then(() => {
@@ -64,21 +54,20 @@ module.exports = app => {
             }]
           },
           async run({ selection, paths, output, maxBytes, signal }) {
-            const args = [worker, '--output', output, '--max-bytes', String(maxBytes)]
-            if (selection.bbox) args.push('--bbox', ...selection.bbox.map(value => value.toFixed(12)))
-            for (const field of selection.fields ?? []) {
+            const fields = (selection.fields ?? []).map(field => {
               const supported = aromeFields.find(available => available.parameter === field.parameter)
               if (!supported) throw new Error('Unsupported field')
-              args.push('--field', supported.shortName)
-            }
-            if (selection.from) args.push('--from', selection.from, '--to', selection.to)
-            const run = exec(python, [...args, '--', ...paths], {
+              return supported.shortName
+            })
+            const run = exec(process.execPath, [worker], {
               signal: AbortSignal.any([signal, controller.signal]),
               timeout: 120000,
               killSignal: 'SIGKILL',
               maxBuffer: 256 * 1024
             })
             const closed = new Promise(resolve => run.child.once('close', resolve))
+            run.child.stdin.on('error', () => {}) // The child may exit before reading its request.
+            run.child.stdin.end(JSON.stringify({ selection: { ...selection, fields }, paths, output, maxBytes }))
             try {
               return JSON.parse((await run).stdout)
             } finally {
@@ -88,9 +77,11 @@ module.exports = app => {
         }
         registry.set(scope, registered)
         app.setPluginStatus('Ready for GRIB2 exports and AROME 0.025° selections')
-      }).catch(() => {
-        if (!controller.signal.aborted)
-          app.setPluginError('Configure Python with ecCodes and NumPy')
+      }).catch(error => {
+        if (!controller.signal.aborted) {
+          app.debug?.(error.stderr?.trim() || error.message)
+          app.setPluginError('Unable to load ecCodes/WASM. Check that Signal K runs on Node.js 24 or later.')
+        }
       })
       return starting
     },
