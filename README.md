@@ -1,15 +1,23 @@
 # GRIB Processor for Signal K
 
 GRIB Processor provides single-file exports to the companion Forecast Dataset
-Provider. The alpha assembles GRIB2 messages without repacking and clips
+Provider. The beta assembles GRIB2 messages without repacking and clips
 AROME 0.025° SP1 fields (10 m wind and mean sea-level pressure) on the original
 grid. It runs ecCodes in a bounded Python subprocess on the catalogue server.
 
-## Local installation
+## Install the beta
 
 Use Signal K 2.35.1 with Node 22+ and Forecast Dataset Provider
-0.3.0-alpha.3. Install the packed plugin through Signal K, then create a
-Python 3.11+ virtual environment in the processor's plugin data directory.
+0.3.0-beta.1. Install both packages from the Signal K configuration
+directory as the user running Signal K:
+
+```sh
+npm install signalk-forecast-dataset-provider@0.3.0-beta.1 signalk-grib-processor@0.1.0-beta.1
+```
+
+Create a Python 3.11+ virtual environment in the processor's plugin data
+directory. Adjust the following path if Signal K uses a custom configuration
+directory or runs in a container.
 
 ```sh
 processor_dir=~/.signalk/plugin-config-data/signalk-grib-processor
@@ -18,8 +26,8 @@ python3 -m venv "$processor_dir/venv"
 "$processor_dir/venv/bin/pip" install eccodes==2.50.1 numpy==2.5.5
 ```
 
-Enable GRIB Processor in Plugin Config. The optional **Python executable**
-setting points to an alternative environment. This alpha runs on Linux with
+Restart Signal K, then enable GRIB Processor in Plugin Config. The optional **Python executable**
+setting points to an alternative environment. This beta runs on Linux with
 ecCodes and NumPy wheels available for the target architecture.
 
 ## Use the API
@@ -33,7 +41,7 @@ delay. A completed job returns a catalogue dataset. Download it through
 The provider publishes the result automatically. It expires 20 minutes after
 commit by default. Send `"expiresInSeconds": null` to keep it without expiry,
 or send a positive duration for a custom lifetime. See `docs/grib-export-alpha.md`
-in Forecast Dataset Provider for selectors and job details.
+in [Forecast Dataset Provider](https://github.com/macjl/signalk-forecast-dataset-provider/blob/v0.3.0-beta.1/docs/grib-export-alpha.md) for selectors and job details.
 
-This alpha runs one export at a time. Its source limit is 1 GiB, and the
+This beta runs one export at a time. Its source limit is 1 GiB, and the
 output limit advertised on each operation also respects the provider settings.
