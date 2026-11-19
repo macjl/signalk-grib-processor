@@ -2,12 +2,16 @@
 const fs = require('node:fs')
 const { createEncoder } = require('./eccodes.cjs')
 
-const hour = 60 * 60 * 1000
 const eps = 1e-8
 const signature = Buffer.from('GRIB')
 const terminator = Buffer.from('7777')
 const positiveLongitude = lon => ((lon % 360) + 360) % 360
-const signedLongitude = lon => positiveLongitude(lon + 180) - 180
+const longitudeNear = (lon, reference) => lon + 360 * Math.round((reference - lon) / 360)
+const aliases = new Map([
+  ['eastward_wind', '10u'],
+  ['northward_wind', '10v'],
+  ['air_pressure_at_mean_sea_level', 'prmsl']
+])
 
 function readExactly(fd, buffer, position) {
   let bytes = 0
@@ -50,30 +54,42 @@ function nextFloat(value) {
 }
 
 function crop(message, [west, south, east, north]) {
-  if (message.getString('gridType') !== 'regular_ll' || message.getLong('scanningMode') !== 0)
-    throw new Error('Expected a regular latitude/longitude grid scanned west to east, north to south')
+  if (message.getString('gridType') !== 'regular_ll')
+    throw new Error('Spatial selection requires a regular latitude-longitude grid')
+  const scanning = message.getLong('scanningMode')
+  if (![0, 64, 128, 192].includes(scanning))
+    throw new Error('Spatial selection requires a grid scanned by rows in a constant direction')
 
   const ni = message.getLong('Ni')
   const nj = message.getLong('Nj')
   const dx = message.getDouble('iDirectionIncrementInDegrees')
   const dy = message.getDouble('jDirectionIncrementInDegrees')
-  if (Math.abs(dx - 0.025) > 1e-10 || Math.abs(dy - 0.025) > 1e-10)
-    throw new Error('Expected the AROME 0.025-degree grid')
-  const lon = signedLongitude(message.getDouble('longitudeOfFirstGridPointInDegrees'))
-  const lat = message.getDouble('latitudeOfFirstGridPointInDegrees')
-  if (!(lon - eps <= west && west < east && east <= lon + (ni - 1) * dx + eps &&
-        lat - (nj - 1) * dy - eps <= south && south < north && north <= lat + eps))
+  if (ni < 2 || nj < 2 || !Number.isFinite(dx) || !Number.isFinite(dy) || dx <= 0 || dy <= 0)
+    throw new Error('Invalid regular latitude-longitude grid dimensions or increments')
+  const iReversed = Boolean(scanning & 128)
+  const jReversed = Boolean(scanning & 64)
+  const lon = message.getDouble('longitudeOfFirstGridPointInDegrees') - (iReversed ? (ni - 1) * dx : 0)
+  const lat = message.getDouble('latitudeOfFirstGridPointInDegrees') + (jReversed ? (nj - 1) * dy : 0)
+  const span = (ni - 1) * dx
+  // A global grid may include its first meridian again as the last column.
+  const columns = Math.abs(span - 360) <= eps ? ni - 1 : ni
+  const cyclic = Math.abs(columns * dx - 360) <= eps
+  const westOffset = longitudeNear(west, lon + 180 - eps) - lon
+  const eastOffset = westOffset + east - west
+  if (!(west < east && south < north &&
+        (cyclic || (westOffset >= -eps && eastOffset <= span + eps)) &&
+        lat - (nj - 1) * dy - eps <= south && north <= lat + eps))
     throw new Error('Requested bounding box must be fully covered by the source grid')
 
-  const left = Math.max(0, Math.ceil((west - eps - lon) / dx))
-  const right = Math.min(ni - 1, Math.floor((east + eps - lon) / dx))
+  const left = Math.max(0, Math.ceil((westOffset - eps) / dx))
+  const right = Math.min(cyclic ? left + columns - 1 : ni - 1, Math.floor((eastOffset + eps) / dx))
   const top = Math.max(0, Math.ceil((lat - (north + eps)) / dy))
   const bottom = Math.min(nj - 1, Math.floor((lat - (south - eps)) / dy))
   const width = right - left + 1
   const height = bottom - top + 1
   const count = width * height
-  if (width < 2 || height < 2 || count === ni * nj)
-    throw new Error('Requested bounding box must produce a smaller grid with at least two points per axis')
+  if (width < 2 || height < 2)
+    throw new Error('Requested bounding box must contain at least two grid points per axis')
 
   const values = message.values()
   if (values.length !== ni * nj) throw new Error('Invalid GRIB grid value count')
@@ -85,9 +101,11 @@ function crop(message, [west, south, east, north]) {
   let out = 0
   let missingCount = 0
   let maximum = -Infinity
-  for (let row = top; row <= bottom; row++) {
-    for (let col = left; col <= right; col++) {
-      const index = row * ni + col
+  for (let j = 0; j < height; j++) {
+    const row = jReversed ? nj - 1 - bottom + j : top + j
+    for (let i = 0; i < width; i++) {
+      const col = (iReversed ? right - i : left + i) % columns
+      const index = row * ni + (iReversed ? ni - 1 - col : col)
       if (bitmap && !bitmap[index]) {
         output[out++] = NaN
         missingCount++
@@ -109,46 +127,50 @@ function crop(message, [west, south, east, north]) {
   }
   message.setLong('Ni', width)
   message.setLong('Nj', height)
-  message.setDouble('longitudeOfFirstGridPointInDegrees', positiveLongitude(lon + left * dx))
-  message.setDouble('longitudeOfLastGridPointInDegrees', positiveLongitude(lon + right * dx))
-  message.setDouble('latitudeOfFirstGridPointInDegrees', lat - top * dy)
-  message.setDouble('latitudeOfLastGridPointInDegrees', lat - bottom * dy)
+  message.setDouble('longitudeOfFirstGridPointInDegrees', positiveLongitude(lon + (iReversed ? right : left) * dx))
+  message.setDouble('longitudeOfLastGridPointInDegrees', positiveLongitude(lon + (iReversed ? left : right) * dx))
+  message.setDouble('latitudeOfFirstGridPointInDegrees', lat - (jReversed ? bottom : top) * dy)
+  message.setDouble('latitudeOfLastGridPointInDegrees', lat - (jReversed ? top : bottom) * dy)
   message.setLong('bitmapPresent', missingCount ? 1 : 0)
   message.setValues(output)
   if (message.getLong('numberOfPoints') !== count || message.getLong('numberOfMissing') !== missingCount)
     throw new Error('Output point count or bitmap does not match the requested crop')
   return [
-    signedLongitude(message.getDouble('longitudeOfFirstGridPointInDegrees')),
-    message.getDouble('latitudeOfLastGridPointInDegrees'),
-    signedLongitude(message.getDouble('longitudeOfLastGridPointInDegrees')),
-    message.getDouble('latitudeOfFirstGridPointInDegrees')
+    longitudeNear(message.getDouble(iReversed ? 'longitudeOfLastGridPointInDegrees' : 'longitudeOfFirstGridPointInDegrees'), west),
+    message.getDouble(jReversed ? 'latitudeOfFirstGridPointInDegrees' : 'latitudeOfLastGridPointInDegrees'),
+    longitudeNear(message.getDouble(iReversed ? 'longitudeOfFirstGridPointInDegrees' : 'longitudeOfLastGridPointInDegrees'), east),
+    message.getDouble(jReversed ? 'latitudeOfLastGridPointInDegrees' : 'latitudeOfFirstGridPointInDegrees')
   ]
 }
 
 function validityTime(message) {
-  const date = String(message.getLong('validityDate'))
-  const time = String(message.getLong('validityTime')).padStart(4, '0')
-  const stamp = Date.parse(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}T${time.slice(0, 2)}:${time.slice(2)}:00Z`)
-  if (!Number.isFinite(stamp)) throw new Error('Invalid GRIB forecast time')
-  return stamp
+  const date = String(message.getLong('dataDate')).padStart(8, '0')
+  const clock = ['hour', 'minute', 'second'].map(key => String(message.getLong(key)).padStart(2, '0')).join(':')
+  const reference = Date.parse(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}T${clock}Z`)
+  // GRIB2 code table 4.4 uses 13 for seconds. endStep refers to the end
+  // of the period for statistical messages such as accumulated rain.
+  message.setLong('stepUnits', 13)
+  const valid = reference + message.getLong('endStep') * 1000
+  if (!Number.isFinite(new Date(valid).getTime())) throw new Error('Invalid GRIB forecast time')
+  return valid
 }
 
 async function processGrib({ selection, paths, output, maxBytes }) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error('Invalid GRIB export size limit')
-  const fields = new Set(selection.fields)
+  const fields = selection.fields ?? []
   const bbox = selection.bbox
   const from = selection.from === undefined ? undefined : Date.parse(selection.from)
   const to = selection.to === undefined ? undefined : Date.parse(selection.to)
   const selectTime = from !== undefined
   if (selectTime !== (to !== undefined) || (selectTime && !(Number.isFinite(from) && Number.isFinite(to) && from <= to)))
     throw new Error('Invalid GRIB forecast interval')
-  const encoder = fields.size || bbox || selectTime ? await createEncoder() : undefined
-  const observed = new Map()
+  const encoder = fields.length || bbox || selectTime ? await createEncoder() : undefined
+  const observed = new Set()
+  const times = new Set()
   const io = Buffer.allocUnsafe(64 * 1024)
   let messageCount = 0
   let total = 0
   let bounds
-  let cycle
 
   const out = fs.openSync(output, 'wx')
   function write(bytes) {
@@ -181,12 +203,13 @@ async function processGrib({ selection, paths, output, maxBytes }) {
         const bytes = Buffer.allocUnsafe(input.length)
         readExactly(input.fd, bytes, input.offset)
         encoder.read(bytes, message => {
-          const currentCycle = `${message.getLong('dataDate')}:${message.getLong('dataTime')}`
-          cycle ??= currentCycle
-          if (cycle !== currentCycle) throw new Error('All inputs must come from the same model run')
-          const field = message.getString('shortName')
-          if (fields.size && !fields.has(field)) return
-          const time = validityTime(message)
+          const field = fields.length ? message.getString('shortName') : undefined
+          const matched = fields.filter(({ parameter, level }) =>
+            (parameter === field || aliases.get(parameter) === field) &&
+            (!level || (level.type === message.getString('typeOfLevel') &&
+              level.value === message.getDouble('level'))))
+          if (fields.length && !matched.length) return
+          const time = fields.length || selectTime ? validityTime(message) : undefined
           if (selectTime && (time < from || time > to)) return
           if (bbox) {
             const extent = crop(message, bbox)
@@ -196,30 +219,24 @@ async function processGrib({ selection, paths, output, maxBytes }) {
             message.writeBytes(write)
           } else write(bytes)
           messageCount++
-          if (!observed.has(field)) observed.set(field, new Set())
-          observed.get(field).add(time)
+          for (const match of matched) observed.add(match)
+          if (time !== undefined) times.add(time)
         })
       }
-      if (!messageCount || [...fields].some(field => !observed.has(field)))
+      if (!messageCount) throw new Error('No GRIB messages match the selection')
+      if (fields.some(field => !observed.has(field)))
         throw new Error('Requested fields were not all found in the selected forecast steps')
-      if (selectTime) {
-        for (let time = from; time <= to; time += hour) {
-          if ([...fields].some(field => !observed.get(field).has(time)))
-            throw new Error('A requested field is missing at one or more requested hourly forecast times')
-        }
-      }
     } finally { fs.closeSync(out) }
   } catch (error) {
     fs.rmSync(output, { force: true })
     throw error
   }
-  const times = fields.size || selectTime
-    ? Array.from(new Set([...observed.values()].flatMap(set => [...set]))).sort((a, b) => a - b)
-    : []
   return {
     messageCount,
     ...(bounds ? { bounds } : {}),
-    ...(times.length ? { forecastTimes: times.map(time => new Date(time).toISOString().replace('.000Z', 'Z')) } : {}),
+    ...(times.size ? {
+      forecastTimes: [...times].sort((a, b) => a - b).map(time => new Date(time).toISOString().replace('.000Z', 'Z'))
+    } : {}),
   }
 }
 
