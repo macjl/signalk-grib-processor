@@ -1,0 +1,16 @@
+diff --git a/wasm/build_wasm.py b/wasm/build_wasm.py
+index c6e3e25..4273ab5 100755
+--- a/wasm/build_wasm.py
++++ b/wasm/build_wasm.py
+@@ -477,6 +477,11 @@ def main():
+         '_codes_context_set_samples_path_wrapper',
+         '_codes_context_get_default_wrapper',
+         '_codes_memfs_exists',
++        '_codes_set_long',
++        '_codes_set_double',
++        '_codes_set_double_array',
++        '_codes_get_long_array',
++        '_codes_get_message',
+         '_malloc',
+         '_free',
+     ]
