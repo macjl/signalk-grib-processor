@@ -143,16 +143,54 @@ function crop(message, [west, south, east, north]) {
   ]
 }
 
-function validityTime(message) {
+function referenceTime(message) {
   const date = String(message.getLong('dataDate')).padStart(8, '0')
   const clock = ['hour', 'minute', 'second'].map(key => String(message.getLong(key)).padStart(2, '0')).join(':')
-  const reference = Date.parse(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}T${clock}Z`)
+  return Date.parse(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}T${clock}Z`)
+}
+
+function validityTime(message, reference = referenceTime(message)) {
   // GRIB2 code table 4.4 uses 13 for seconds. endStep refers to the end
   // of the period for statistical messages such as accumulated rain.
   message.setLong('stepUnits', 13)
   const valid = reference + message.getLong('endStep') * 1000
   if (!Number.isFinite(new Date(valid).getTime())) throw new Error('Invalid GRIB forecast time')
   return valid
+}
+
+const isoTime = time => new Date(time).toISOString().replace('.000Z', 'Z')
+
+async function analyzeGrib({ paths }) {
+  const encoder = await createEncoder()
+  const runs = new Set()
+  const times = new Set()
+  for (const { fd, offset, length } of messages(paths)) {
+    const bytes = Buffer.allocUnsafe(length)
+    readExactly(fd, bytes, offset)
+    // openGrib exposes one field. Do not publish a partial inventory for a
+    // message containing several product-definition sections.
+    let fields = 0
+    const end = length - terminator.length
+    for (let section = 16; section < end;) {
+      if (section + 5 > end) throw new Error('Invalid GRIB2 section header')
+      const size = bytes.readUInt32BE(section)
+      if (size < 5 || section + size > end) throw new Error('Invalid GRIB2 section length')
+      if (bytes[section + 4] === 4 && ++fields > 1)
+        throw new Error('Cannot verify the timeline of a multi-field GRIB2 message')
+      section += size
+    }
+    encoder.read(bytes, message => {
+      const reference = referenceTime(message)
+      runs.add(reference)
+      times.add(validityTime(message, reference))
+    })
+  }
+  if (!times.size) throw new Error('No forecast times in the GRIB2 dataset')
+  const forecastTimes = [...times].sort((a, b) => a - b).map(isoTime)
+  return {
+    ...(runs.size === 1 ? { run: isoTime(runs.values().next().value) } : {}),
+    forecastTimes
+  }
 }
 
 async function processGrib({ selection, paths, output, maxBytes }) {
@@ -235,7 +273,7 @@ async function processGrib({ selection, paths, output, maxBytes }) {
     messageCount,
     ...(bounds ? { bounds } : {}),
     ...(times.size ? {
-      forecastTimes: [...times].sort((a, b) => a - b).map(time => new Date(time).toISOString().replace('.000Z', 'Z'))
+      forecastTimes: [...times].sort((a, b) => a - b).map(isoTime)
     } : {}),
   }
 }
@@ -247,7 +285,8 @@ async function main() {
   }
   const chunks = []
   for await (const chunk of process.stdin) chunks.push(chunk)
-  const result = await processGrib(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+  const request = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  const result = await (process.argv[2] === '--analyze' ? analyzeGrib(request) : processGrib(request))
   process.stdout.write(JSON.stringify(result))
 }
 
@@ -258,4 +297,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { processGrib }
+module.exports = { processGrib, analyzeGrib }

@@ -34,6 +34,22 @@ module.exports = app => {
   let starting
   let lifetime
   let scope
+  async function invokeWorker(args, { signal, ...request }, pluginSignal) {
+    const run = exec(process.execPath, [worker, ...args], {
+      signal: AbortSignal.any([signal, pluginSignal]),
+      timeout: 120000,
+      killSignal: 'SIGKILL',
+      maxBuffer: 1024 * 1024
+    })
+    const closed = new Promise(resolve => run.child.once('close', resolve))
+    run.child.stdin.on('error', () => {}) // The child may exit before reading its request.
+    run.child.stdin.end(JSON.stringify(request))
+    try {
+      return JSON.parse((await run).stdout)
+    } finally {
+      await closed
+    }
+  }
   const plugin = {
     id,
     name: 'GRIB Processor',
@@ -52,22 +68,8 @@ module.exports = app => {
           id,
           version,
           capabilities,
-          async run({ selection, paths, output, maxBytes, signal }) {
-            const run = exec(process.execPath, [worker], {
-              signal: AbortSignal.any([signal, controller.signal]),
-              timeout: 120000,
-              killSignal: 'SIGKILL',
-              maxBuffer: 256 * 1024
-            })
-            const closed = new Promise(resolve => run.child.once('close', resolve))
-            run.child.stdin.on('error', () => {}) // The child may exit before reading its request.
-            run.child.stdin.end(JSON.stringify({ selection, paths, output, maxBytes }))
-            try {
-              return JSON.parse((await run).stdout)
-            } finally {
-              await closed
-            }
-          }
+          run: input => invokeWorker([], input, controller.signal),
+          analyze: input => invokeWorker(['--analyze'], input, controller.signal)
         }
         registry.set(scope, registered)
         app.setPluginStatus('Ready for GRIB2 processing')
