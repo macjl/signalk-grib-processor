@@ -1,6 +1,6 @@
 {
   "name": "signalk-grib-processor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "On-demand GRIB2 export and subsetting by area, field and forecast time for Signal K",
   "main": "index.cjs",
   "files": [
@@ -23,6 +23,7 @@
     "node": ">=24"
   },
   "license": "Apache-2.0",
+  "signalk-plugin-enabled-by-default": true,
   "signalk": {
     "displayName": "GRIB Processor",
     "requires": [
