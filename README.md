@@ -12,14 +12,14 @@ values or rewriting source assets. A file can contain multiple GRIB2 messages.
 Messages that carry several fields can be assembled unchanged. They are not
 eligible for selection with the current worker.
 
-## Install the beta
+## Install
 
-Use Signal K 2.35.1 with Node.js 24+ and Forecast Dataset Provider
-0.3.0-beta.4. Install both packages from the Signal K configuration
-directory as the user running Signal K:
+Use Signal K 2.35.1 with Node.js 24+ and Forecast Dataset Provider 0.3.0
+or later. Install GRIB Processor from the Signal K App Store, or install both
+packages from the Signal K configuration directory as the user running Signal K:
 
 ```sh
-npm install signalk-forecast-dataset-provider@0.3.0-beta.4 signalk-grib-processor@0.1.0-beta.5
+npm install signalk-forecast-dataset-provider@latest signalk-grib-processor@latest
 ```
 
 Restart Signal K, then enable GRIB Processor in Plugin Config. The npm package
@@ -56,7 +56,7 @@ selectors require a catalogue that supports those selectors.
 The provider publishes the result automatically. It expires 20 minutes after
 commit by default. Send `"expiresInSeconds": null` to keep it without expiry,
 or send a positive duration for a custom lifetime. See the catalogue
-[export API and curl examples](https://github.com/macjl/signalk-forecast-dataset-provider/blob/v0.3.0-beta.4/docs/grib-export-alpha.md).
+[export API and curl examples](https://github.com/macjl/signalk-forecast-dataset-provider/blob/v0.3.0/docs/grib-export-alpha.md).
 
 The catalogue controls concurrency. The source limit per export is 1 GiB, and
 the advertised output limit also respects the provider settings.
