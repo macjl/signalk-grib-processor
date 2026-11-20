@@ -3,7 +3,7 @@ const test = require('node:test')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { processGrib } = require('../worker.cjs')
+const { processGrib, analyzeGrib } = require('../worker.cjs')
 const { createEncoder } = require('../eccodes.cjs')
 
 const fixture = path.join(__dirname, 'fixtures', 'arome-grid.grib2')
@@ -62,6 +62,10 @@ test('a time range keeps actual irregular and sub-hourly steps, without requirin
     return encoded
   }))
   fs.writeFileSync(input, Buffer.concat(steps))
+  assert.deepEqual(await analyzeGrib({ paths: [input, input] }), {
+    run: '2026-11-18T15:00:15Z',
+    forecastTimes: ['2026-11-18T15:00:15Z', '2026-11-18T15:30:15Z', '2026-11-18T18:00:20Z'],
+  })
   const result = await processGrib({
     selection: { from: '2026-11-18T15:00:16Z', to: '2026-11-18T18:00:20Z' },
     paths: [input], output, maxBytes: original.length,

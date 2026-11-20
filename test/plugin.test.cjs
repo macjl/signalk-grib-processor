@@ -37,13 +37,18 @@ test('the WASM worker advertises model-independent area, time and field selectio
     selectors: ['bbox', 'fields', 'from', 'to'],
   })
   const output = path.join(directory, 'selection.grib2')
+  const fixture = path.join(__dirname, 'fixtures', 'arome-grid.grib2')
+  assert.deepEqual(await processor.analyze({ paths: [fixture], signal: new AbortController().signal }), {
+    run: '2026-11-18T15:00:00Z',
+    forecastTimes: ['2026-11-18T15:00:00Z', '2026-11-18T16:00:00Z']
+  })
   const result = await processor.run({
     selection: {
       bbox: [-5.975, 45.025, -5.925, 45.075],
       fields: [{ parameter: 'eastward_wind', level: { type: 'heightAboveGround', value: 10, unit: 'm' } }],
       from: '2026-11-18T15:00:00Z', to: '2026-11-18T15:00:00Z',
     },
-    paths: [path.join(__dirname, 'fixtures', 'arome-grid.grib2')],
+    paths: [fixture],
     output,
     maxBytes: 1024,
     signal: new AbortController().signal,

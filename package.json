@@ -1,6 +1,6 @@
 {
   "name": "signalk-grib-processor",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0-beta.4",
   "description": "On-demand GRIB2 export and subsetting by area, field and forecast time for Signal K",
   "main": "index.cjs",
   "files": [

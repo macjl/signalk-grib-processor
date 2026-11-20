@@ -5,14 +5,20 @@ Provider. It assembles GRIB2 messages without repacking and crops regular
 latitude-longitude grids on their original grid. It ships ecCodes/WASM and runs
 each export in a separate Node.js process on the catalogue server.
 
+A compatible Forecast Dataset Provider also delegates background GRIB2
+inventory analysis to this plugin. The worker reads the reference and validity
+times from the message headers. It returns the exact times without unpacking the
+grid values or rewriting the source assets. A file can contain multiple GRIB2
+messages. Inventory analysis requires each message to carry a single field.
+
 ## Install the beta
 
 Use Signal K 2.35.1 with Node.js 24+ and Forecast Dataset Provider
-0.3.0-beta.2. Install both packages from the Signal K configuration
+0.3.0-beta.3. Install both packages from the Signal K configuration
 directory as the user running Signal K:
 
 ```sh
-npm install signalk-forecast-dataset-provider@0.3.0-beta.2 signalk-grib-processor@0.1.0-beta.3
+npm install signalk-forecast-dataset-provider@0.3.0-beta.3 signalk-grib-processor@0.1.0-beta.4
 ```
 
 Restart Signal K, then enable GRIB Processor in Plugin Config. The npm package
@@ -48,7 +54,7 @@ selectors require a catalogue that supports those selectors.
 The provider publishes the result automatically. It expires 20 minutes after
 commit by default. Send `"expiresInSeconds": null` to keep it without expiry,
 or send a positive duration for a custom lifetime. See the catalogue
-[export API and curl examples](https://github.com/macjl/signalk-forecast-dataset-provider/blob/v0.3.0-beta.2/docs/grib-export-alpha.md).
+[export API and curl examples](https://github.com/macjl/signalk-forecast-dataset-provider/blob/v0.3.0-beta.3/docs/grib-export-alpha.md).
 
 This beta runs one export at a time. Its source limit is 1 GiB, and the
 output limit advertised on each operation also respects the provider settings.
