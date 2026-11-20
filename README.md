@@ -22,8 +22,9 @@ packages from the Signal K configuration directory as the user running Signal K:
 npm install signalk-forecast-dataset-provider@latest signalk-grib-processor@latest
 ```
 
-Restart Signal K, then enable GRIB Processor in Plugin Config. The npm package
-supplies the entire processing runtime, including the WASM binary.
+Restart Signal K. On a fresh installation, GRIB Processor starts automatically.
+If you previously disabled it, enable it in Plugin Config when you want to use
+it again. The npm package includes the processing runtime and WASM binary.
 
 ## Use the API
 
