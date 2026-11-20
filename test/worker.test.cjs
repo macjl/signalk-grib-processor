@@ -65,6 +65,8 @@ test('a time range keeps actual irregular and sub-hourly steps, without requirin
   assert.deepEqual(await analyzeGrib({ paths: [input, input] }), {
     run: '2026-11-18T15:00:15Z',
     forecastTimes: ['2026-11-18T15:00:15Z', '2026-11-18T15:30:15Z', '2026-11-18T18:00:20Z'],
+    bounds: [-6, 45, -5.9, 45.1],
+    grid: { bboxCrop: true }
   })
   const result = await processGrib({
     selection: { from: '2026-11-18T15:00:16Z', to: '2026-11-18T18:00:20Z' },
@@ -103,11 +105,57 @@ test('a global grid scanned from the south can be cropped across Greenwich', asy
     selection: { bbox: [-0.25, 44.25, 0.25, 44.75] },
     paths: [input], output, maxBytes: 1024,
   })
+  assert.deepEqual((await analyzeGrib({ paths: [input] })).bounds, [-180, 44, 180, 45])
   assert.deepEqual(result, { messageCount: 1, bounds: [-0.25, 44.25, 0.25, 44.75] })
   encoder.read(fs.readFileSync(output), message => {
     assert.equal(message.getLong('Ni'), 3)
     assert.equal(message.getLong('Nj'), 3)
     assert.equal(message.getLong('scanningMode'), 64)
     assert.deepEqual(Array.from(message.values()), [2879, 1440, 1441, 4319, 2880, 2881, 5759, 4320, 4321])
+  })
+})
+
+test('multi-field messages are preserved by assembly and rejected by all selectors', async t => {
+  const output = outputPath(t)
+  const input = path.join(path.dirname(output), 'multi-field.grib2')
+  const first = original.subarray(0, Number(original.readBigUInt64BE(8)))
+  const encoder = await createEncoder()
+  const later = encoder.read(first, message => {
+    message.setLong('stepUnits', 13)
+    message.setLong('endStep', 3600)
+    let encoded
+    message.writeBytes(bytes => { encoded = Buffer.from(bytes) })
+    return encoded
+  })
+  let section = 16
+  while (later[section + 4] !== 4) section += later.readUInt32BE(section)
+  const multi = Buffer.concat([first.subarray(0, -4), later.subarray(section)])
+  multi.writeBigUInt64BE(BigInt(multi.length), 8)
+  fs.writeFileSync(input, multi)
+  assert.deepEqual(await analyzeGrib({ paths: [input] }), {
+    grid: { bboxCrop: false, selectionUnsupported: true }
+  })
+  const request = { paths: [input], output, maxBytes: multi.length }
+  await assert.rejects(processGrib({ ...request,
+    selection: { from: '2026-11-18T15:00:00Z', to: '2026-11-18T15:00:00Z' }
+  }), /multi-field/)
+  assert.equal(fs.existsSync(output), false)
+  await processGrib({ ...request, selection: {} })
+  assert.deepEqual(fs.readFileSync(output), multi)
+})
+
+test('a rotated grid still has a forecast timeline and cannot be cropped by area', async t => {
+  const input = outputPath(t)
+  const first = original.subarray(0, Number(original.readBigUInt64BE(8)))
+  const encoder = await createEncoder()
+  encoder.read(first, message => {
+    message.setLong('gridDefinitionTemplateNumber', 1)
+    assert.equal(message.getString('gridType'), 'rotated_ll')
+    message.writeBytes(bytes => fs.writeFileSync(input, bytes))
+  })
+  assert.deepEqual(await analyzeGrib({ paths: [input] }), {
+    run: '2026-11-18T15:00:00Z',
+    forecastTimes: ['2026-11-18T15:00:00Z'],
+    grid: { bboxCrop: false }
   })
 })

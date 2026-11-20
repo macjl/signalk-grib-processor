@@ -36,11 +36,19 @@ test('the WASM worker advertises model-independent area, time and field selectio
     output: { format: 'grib2', layout: 'single-file' },
     selectors: ['bbox', 'fields', 'from', 'to'],
   })
+  const coverageProvider = { ...compatibleProvider, verifiedGrid: true }
+  const pending = processor.capabilities(record, coverageProvider)[0]
+  assert.deepEqual(pending.selectors, ['fields', 'from', 'to'])
+  assert.deepEqual(pending.pendingSelectors, ['bbox'])
+  const verified = { ...record, inventory: { metadata: { grid: { bboxCrop: true } } } }
+  assert.deepEqual(processor.capabilities(verified, coverageProvider)[0].selectors, ['bbox', 'fields', 'from', 'to'])
   const output = path.join(directory, 'selection.grib2')
   const fixture = path.join(__dirname, 'fixtures', 'arome-grid.grib2')
   assert.deepEqual(await processor.analyze({ paths: [fixture], signal: new AbortController().signal }), {
     run: '2026-11-18T15:00:00Z',
-    forecastTimes: ['2026-11-18T15:00:00Z', '2026-11-18T16:00:00Z']
+    forecastTimes: ['2026-11-18T15:00:00Z', '2026-11-18T16:00:00Z'],
+    bounds: [-6, 45, -5.9, 45.1],
+    grid: { bboxCrop: true }
   })
   const result = await processor.run({
     selection: {

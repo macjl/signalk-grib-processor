@@ -7,18 +7,19 @@ each export in a separate Node.js process on the catalogue server.
 
 A compatible Forecast Dataset Provider also delegates background GRIB2
 inventory analysis to this plugin. The worker reads the reference and validity
-times from the message headers. It returns the exact times without unpacking the
-grid values or rewriting the source assets. A file can contain multiple GRIB2
-messages. Inventory analysis requires each message to carry a single field.
+times and regular-grid geometry from the message headers without unpacking
+values or rewriting source assets. A file can contain multiple GRIB2 messages.
+Messages that carry several fields can be assembled unchanged. They are not
+eligible for selection with the current worker.
 
 ## Install the beta
 
 Use Signal K 2.35.1 with Node.js 24+ and Forecast Dataset Provider
-0.3.0-beta.3. Install both packages from the Signal K configuration
+0.3.0-beta.4. Install both packages from the Signal K configuration
 directory as the user running Signal K:
 
 ```sh
-npm install signalk-forecast-dataset-provider@0.3.0-beta.3 signalk-grib-processor@0.1.0-beta.4
+npm install signalk-forecast-dataset-provider@0.3.0-beta.4 signalk-grib-processor@0.1.0-beta.5
 ```
 
 Restart Signal K, then enable GRIB Processor in Plugin Config. The npm package
@@ -35,9 +36,10 @@ delay. A completed job returns a catalogue dataset. Download it through
 When the operation lists the `bbox` selector, send a bounding box in
 `[west, south, east, north]` order. Cropping supports regular latitude-longitude
 grids scanned by rows, at any resolution. The requested box must be covered by
-the source and contain at least two points per axis. If the catalogue has no
-grid metadata, the worker checks the actual GRIB2 grid when it runs the export.
-A grid that fails this check can still be exported without `bbox`.
+the source and contain at least two points per axis. With a catalogue that
+supports verified grid capabilities, `bbox` appears after automatic analysis
+has confirmed that the messages share a compatible grid. The worker also
+validates the grid when it runs the export.
 
 When the operation lists `from` and `to`, supply both as UTC timestamps.
 The worker keeps messages whose actual forecast validity is in that inclusive
@@ -54,10 +56,10 @@ selectors require a catalogue that supports those selectors.
 The provider publishes the result automatically. It expires 20 minutes after
 commit by default. Send `"expiresInSeconds": null` to keep it without expiry,
 or send a positive duration for a custom lifetime. See the catalogue
-[export API and curl examples](https://github.com/macjl/signalk-forecast-dataset-provider/blob/v0.3.0-beta.3/docs/grib-export-alpha.md).
+[export API and curl examples](https://github.com/macjl/signalk-forecast-dataset-provider/blob/v0.3.0-beta.4/docs/grib-export-alpha.md).
 
-This beta runs one export at a time. Its source limit is 1 GiB, and the
-output limit advertised on each operation also respects the provider settings.
+The catalogue controls concurrency. The source limit per export is 1 GiB, and
+the advertised output limit also respects the provider settings.
 
 The [build sources for the bundled module](vendor/README.md) are documented for
 maintainers.

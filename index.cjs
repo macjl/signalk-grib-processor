@@ -8,23 +8,28 @@ const id = 'signalk-grib-processor'
 const version = require('./package.json').version
 const registryKey = Symbol.for('macjl.forecast-datasets.processors.v1')
 const worker = path.join(__dirname, 'worker.cjs')
-function capabilities(record, { timeRanges, unlistedFields } = {}) {
+function capabilities(record, { timeRanges, unlistedFields, verifiedGrid } = {}) {
   if (record.format !== 'grib2') return []
   const grid = record.inventory?.metadata.grid ?? record.metadata?.grid
   const gridType = grid?.gridType
   const scanningMode = grid?.scanningMode
-  const spatial = (gridType === undefined || gridType === 'regular_ll') &&
-    (scanningMode === undefined || [0, 64, 128, 192].includes(scanningMode))
+  const unsupported = record.inventory?.metadata.grid?.selectionUnsupported === true
+  const pendingArea = verifiedGrid && typeof record.inventory?.metadata.grid?.bboxCrop !== 'boolean'
+  const spatial = verifiedGrid
+    ? record.inventory?.metadata.grid?.bboxCrop === true
+    : (gridType === undefined || gridType === 'regular_ll') &&
+      (scanningMode === undefined || [0, 64, 128, 192].includes(scanningMode))
   const fields = record.inventory?.metadata.fields ?? record.metadata?.fields ?? []
   return [{
     operation: 'export',
     output: { format: 'grib2', layout: 'single-file' },
-    selectors: [
+    selectors: unsupported ? [] : [
       ...(spatial ? ['bbox'] : []),
       ...(fields.length || unlistedFields ? ['fields'] : []),
       ...(timeRanges ? ['from', 'to'] : [])
     ],
-    ...(fields.length ? { fields } : {})
+    ...(pendingArea ? { pendingSelectors: ['bbox'] } : {}),
+    ...(!unsupported && fields.length ? { fields } : {})
   }]
 }
 
@@ -68,6 +73,11 @@ module.exports = app => {
           id,
           version,
           capabilities,
+          needsAnalysis: record => {
+            const metadata = record.inventory?.metadata
+            return metadata?.grid?.selectionUnsupported !== true &&
+              (!metadata?.forecast?.times?.length || typeof metadata?.grid?.bboxCrop !== 'boolean')
+          },
           run: input => invokeWorker([], input, controller.signal),
           analyze: input => invokeWorker(['--analyze'], input, controller.signal)
         }

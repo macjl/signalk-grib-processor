@@ -53,12 +53,10 @@ function nextFloat(value) {
   return bits.getFloat64(0)
 }
 
-function crop(message, [west, south, east, north]) {
+function gridGeometry(message) {
   if (message.getString('gridType') !== 'regular_ll')
     throw new Error('Spatial selection requires a regular latitude-longitude grid')
   const scanning = message.getLong('scanningMode')
-  if (![0, 64, 128, 192].includes(scanning))
-    throw new Error('Spatial selection requires a grid scanned by rows in a constant direction')
 
   const ni = message.getLong('Ni')
   const nj = message.getLong('Nj')
@@ -71,9 +69,29 @@ function crop(message, [west, south, east, north]) {
   const lon = message.getDouble('longitudeOfFirstGridPointInDegrees') - (iReversed ? (ni - 1) * dx : 0)
   const lat = message.getDouble('latitudeOfFirstGridPointInDegrees') + (jReversed ? (nj - 1) * dy : 0)
   const span = (ni - 1) * dx
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) ||
+      lat > 90 + eps || lat - (nj - 1) * dy < -90 - eps || span > 360 + eps)
+    throw new Error('Invalid regular latitude-longitude grid bounds')
   // A global grid may include its first meridian again as the last column.
   const columns = Math.abs(span - 360) <= eps ? ni - 1 : ni
   const cyclic = Math.abs(columns * dx - 360) <= eps
+  return { ni, nj, dx, dy, iReversed, jReversed, lon, lat, span, columns, cyclic, scanning }
+}
+
+const supportsScanning = scanning => [0, 64, 128, 192].includes(scanning)
+
+function gridBounds({ lon, lat, span, nj, dy, cyclic }) {
+  const west = positiveLongitude(lon + 180) - 180
+  const east = west + span
+  return [cyclic ? -180 : west, Math.max(-90, lat - (nj - 1) * dy),
+    cyclic ? 180 : east > 180 + eps ? east - 360 : Math.min(180, east), Math.min(90, lat)]
+    .map(value => Number(value.toFixed(9)))
+}
+
+function crop(message, [west, south, east, north]) {
+  const { ni, nj, dx, dy, iReversed, jReversed, lon, lat, span, columns, cyclic, scanning } = gridGeometry(message)
+  if (!supportsScanning(scanning))
+    throw new Error('Spatial selection requires a grid scanned by rows in a constant direction')
   const westOffset = longitudeNear(west, lon + 180 - eps) - lon
   const eastOffset = westOffset + east - west
   if (!(west < east && south < north &&
@@ -160,36 +178,60 @@ function validityTime(message, reference = referenceTime(message)) {
 
 const isoTime = time => new Date(time).toISOString().replace('.000Z', 'Z')
 
+function singleField(bytes) {
+  // The WASM reader exposes the first field only.
+  let fields = 0
+  const end = bytes.length - terminator.length
+  for (let section = 16; section < end;) {
+    if (section + 5 > end) throw new Error('Invalid GRIB2 section header')
+    const size = bytes.readUInt32BE(section)
+    if (size < 5 || section + size > end) throw new Error('Invalid GRIB2 section length')
+    if (bytes[section + 4] === 4 && ++fields > 1) return false
+    section += size
+  }
+  return true
+}
+
 async function analyzeGrib({ paths }) {
   const encoder = await createEncoder()
   const runs = new Set()
   const times = new Set()
+  let geometry
+  let bounds
+  let commonGrid = true
+  let bboxCrop = true
   for (const { fd, offset, length } of messages(paths)) {
     const bytes = Buffer.allocUnsafe(length)
     readExactly(fd, bytes, offset)
-    // openGrib exposes one field. Do not publish a partial inventory for a
-    // message containing several product-definition sections.
-    let fields = 0
-    const end = length - terminator.length
-    for (let section = 16; section < end;) {
-      if (section + 5 > end) throw new Error('Invalid GRIB2 section header')
-      const size = bytes.readUInt32BE(section)
-      if (size < 5 || section + size > end) throw new Error('Invalid GRIB2 section length')
-      if (bytes[section + 4] === 4 && ++fields > 1)
-        throw new Error('Cannot verify the timeline of a multi-field GRIB2 message')
-      section += size
-    }
+    if (!singleField(bytes)) return { grid: { bboxCrop: false, selectionUnsupported: true } }
     encoder.read(bytes, message => {
       const reference = referenceTime(message)
       runs.add(reference)
       times.add(validityTime(message, reference))
+      if (commonGrid) {
+        try {
+          const current = gridGeometry(message)
+          const key = JSON.stringify(current)
+          if (geometry === undefined) {
+            geometry = key
+            bounds = gridBounds(current)
+            bboxCrop = supportsScanning(current.scanning)
+          } else if (key !== geometry) {
+            commonGrid = false
+          }
+        } catch {
+          commonGrid = false
+        }
+      }
     })
   }
   if (!times.size) throw new Error('No forecast times in the GRIB2 dataset')
   const forecastTimes = [...times].sort((a, b) => a - b).map(isoTime)
   return {
     ...(runs.size === 1 ? { run: isoTime(runs.values().next().value) } : {}),
-    forecastTimes
+    forecastTimes,
+    ...(commonGrid ? { bounds } : {}),
+    grid: { bboxCrop: commonGrid && bboxCrop }
   }
 }
 
@@ -240,6 +282,7 @@ async function processGrib({ selection, paths, output, maxBytes }) {
         }
         const bytes = Buffer.allocUnsafe(input.length)
         readExactly(input.fd, bytes, input.offset)
+        if (!singleField(bytes)) throw new Error('GRIB2 selection does not support multi-field messages')
         encoder.read(bytes, message => {
           const field = fields.length ? message.getString('shortName') : undefined
           const matched = fields.filter(({ parameter, level }) =>
